@@ -1,0 +1,45 @@
+ssl = yes
+
+ssl_cert = </etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem
+ssl_key = </etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem
+
+protocols = imap lmtp
+
+log_path = /dev/stdout
+info_log_path = /dev/stdout
+debug_log_path = /dev/stdout
+
+auth_verbose = yes
+auth_debug = no
+mail_debug = no
+
+mail_location = maildir:/var/vmail/%d/%n
+
+mail_uid = 1000
+mail_gid = 1000
+
+disable_plaintext_auth = no
+auth_mechanisms = plain login
+
+passdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+userdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+service lmtp {
+  inet_listener lmtp {
+    address = 0.0.0.0
+    port = 24
+  }
+}
+
+service auth {
+  inet_listener auth-inet {
+    port = 12345
+  }
+}
