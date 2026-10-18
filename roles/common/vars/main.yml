@@ -1,0 +1,5 @@
+---
+common_fail2ban_bantime: 1h
+common_fail2ban_findtime: 10m
+common_fail2ban_maxretry: 5
+common_ssh_public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK6F3Q1pa/MlNOrYXX9/zlpn9KWOBBbF4T9JyyIhBH0G your_email@example.com

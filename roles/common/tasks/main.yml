@@ -1,0 +1,181 @@
+---
+- name: Update apt cache and upgrade packages
+  ansible.builtin.apt:
+    update_cache: true
+    upgrade: dist
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - git
+      - ufw
+      - htop
+      - net-tools
+      - netcat-openbsd
+      - python3-systemd
+    state: present
+
+- name: Check if swap file exists
+  ansible.builtin.stat:
+    path: /swapfile
+  register: common_swap_file_check
+
+- name: Create swap file
+  ansible.builtin.command: fallocate -l 512M /swapfile
+  when: not common_swap_file_check.stat.exists
+  changed_when: true
+
+- name: Set permissions on swap file
+  ansible.builtin.file:
+    path: /swapfile
+    owner: root
+    group: root
+    mode: "0600"
+  when: not common_swap_file_check.stat.exists
+
+- name: Format swap file
+  ansible.builtin.command: mkswap /swapfile
+  when: not common_swap_file_check.stat.exists
+  changed_when: true
+
+- name: Enable swap file
+  ansible.builtin.command: swapon /swapfile
+  when: not common_swap_file_check.stat.exists
+  changed_when: true
+
+- name: Add swap to fstab
+  ansible.posix.mount:
+    path: none
+    src: /swapfile
+    fstype: swap
+    opts: sw
+    state: present
+
+- name: Install Fail2ban
+  ansible.builtin.package:
+    name: fail2ban
+    state: present
+
+- name: Create config directory
+  ansible.builtin.file:
+    path: /etc/fail2ban/jail.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configuration Fail2ban
+  ansible.builtin.copy:
+    dest: /etc/fail2ban/jail.d/mailserver.local
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [DEFAULT]
+      bantime  = {{ common_fail2ban_bantime }}
+      findtime = {{ common_fail2ban_findtime }}
+      maxretry = {{ common_fail2ban_maxretry }}
+
+      [sshd]
+      enabled = true
+      port    = ssh
+      backend = systemd
+
+      [postfix]
+      enabled = true
+      port    = smtp,465,submission
+      mode    = more
+
+      [postfix-sasl]
+      enabled = true
+      port    = smtp,465,submission
+
+      [dovecot]
+      enabled = true
+      port    = pop3,pop3s,imap,imaps,submission,465,sieve
+  notify: Restart fail2ban
+
+- name: Start Fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    state: started
+    enabled: true
+
+- name: Set system hostname
+  ansible.builtin.hostname:
+    name: "{{ mail_hostname.split('.')[0] }}"
+
+- name: Ensure FQDN is present in /etc/hosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: ^127\.0\.1\.1
+    line: "127.0.1.1 {{ mail_hostname }} {{ mail_hostname.split('.')[0] }}"
+    state: present
+
+- name: Ensure deploy user exists
+  ansible.builtin.user:
+    name: "{{ common_deploy_user | default('user') }}"
+    groups: sudo
+    append: true
+    shell: /bin/bash
+    state: present
+
+- name: Set up authorized key for deploy user
+  ansible.posix.authorized_key:
+    user: "{{ common_deploy_user | default('user') }}"
+    state: present
+    key: "{{ common_ssh_public_key }}"
+
+- name: Allow sudo without password for deploy user
+  ansible.builtin.copy:
+    content: "{{ common_deploy_user | default('user') }} ALL=(ALL) NOPASSWD:ALL"
+    dest: "/etc/sudoers.d/{{ common_deploy_user | default('user') }}"
+    mode: "0440"
+
+- name: Disable Password Authentication in SSH
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: ^#?PasswordAuthentication
+    line: PasswordAuthentication no
+    state: present
+  notify: Restart sshd
+
+- name: Disable Root Login via SSH
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: ^#?PermitRootLogin
+    line: PermitRootLogin no
+    state: present
+  notify: Restart sshd
+
+- name: Allow SSH traffic
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+- name: Allow Web traffic (HTTP/HTTPS)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "80"
+    - "443"
+
+- name: Allow Mail traffic
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "25"
+    - "465"
+    - "587"
+    - "993"
+
+- name: Enable UFW firewall
+  community.general.ufw:
+    state: enabled
+    policy: deny

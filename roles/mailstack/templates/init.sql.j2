@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS virtual_domains (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS virtual_users (
+    id SERIAL PRIMARY KEY,
+    domain_id INT NOT NULL REFERENCES virtual_domains(id) ON DELETE CASCADE,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    active BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS virtual_aliases (
+    id SERIAL PRIMARY KEY,
+    domain_id INT NOT NULL REFERENCES virtual_domains(id) ON DELETE CASCADE,
+    source VARCHAR(100) NOT NULL,
+    destination VARCHAR(100) NOT NULL
+);
+
+INSERT INTO virtual_domains (name) VALUES ('{{ mail_domain }}') ON CONFLICT DO NOTHING;
