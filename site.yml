@@ -1,0 +1,8 @@
+---
+- name: Configure Mailserver VPS
+  hosts: mail_servers
+  become: true
+  roles:
+    - { role: common, tags: [common] }
+    - { role: docker, tags: [docker] }
+    - { role: mailstack, tags: [mailstack] }

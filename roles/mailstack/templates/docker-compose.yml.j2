@@ -1,0 +1,124 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: mail_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: "{{ postgres_db }}"
+      POSTGRES_USER: "{{ postgres_user }}"
+      POSTGRES_PASSWORD: "{{ postgres_password }}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - mail_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ postgres_user }} -d {{ postgres_db }}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  postfix:
+    image: aliasmsk/postfix:{{ app_version }}
+    container_name: mail_postfix
+    restart: always
+    ports:
+      - "25:25"
+      - "465:465"
+      - "587:587"
+    environment:
+      - MAIL_HOSTNAME={{ mail_hostname }}
+      - MAIL_DOMAIN={{ mail_domain }}
+      - DB_HOST=postgres
+      - DB_USER={{ postgres_user }}
+      - DB_PASSWORD={{ postgres_password }}
+      - DB_NAME={{ postgres_db }}
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      opendkim:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    networks:
+      - mail_net
+
+  opendkim:
+    image: instrumentisto/opendkim:latest
+    restart: always
+    volumes:
+      - /opt/mail_server/dkim:/etc/opendkim/keys:ro
+    networks:
+      - mail_net
+
+  dovecot:
+    image: aliasmsk/dovecot:{{ app_version }}
+    container_name: mail_dovecot
+    restart: always
+    environment:
+      - MAIL_HOSTNAME={{ mail_hostname }}
+      - DB_HOST=postgres
+      - DB_NAME={{ postgres_db }}
+      - DB_USER={{ postgres_user }}
+      - DB_PASSWORD={{ postgres_password }}
+    ports:
+      - "143:143"
+      - "993:993"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - mail_data:/var/vmail
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mail_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: mail_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/mail_server/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+    networks:
+      - mail_net
+    depends_on:
+      - webmail
+
+  webmail:
+    image: roundcube/roundcubemail:latest
+    container_name: mail_webmail
+    restart: always
+    environment:
+      ROUNDCUBEMAIL_DEFAULT_HOST: 'dovecot'
+      ROUNDCUBEMAIL_DEFAULT_PORT: 143
+      ROUNDCUBEMAIL_SMTP_SERVER: 'postfix'
+      ROUNDCUBEMAIL_SMTP_PORT: 25
+      ROUNDCUBEMAIL_SMTP_USER: '%u'
+      ROUNDCUBEMAIL_SMTP_PASS: '%p'
+      ROUNDCUBEMAIL_SMTP_AUTH_TYPE: 'LOGIN'
+    networks:
+      - mail_net
+    depends_on:
+      - dovecot
+      - postfix
+
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/www/certbot:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+volumes:
+  postgres_data:
+  mail_data:
+
+networks:
+  mail_net:
+    driver: bridge

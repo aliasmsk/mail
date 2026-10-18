@@ -1,0 +1,12 @@
+---
+mail_domain: example.com
+mail_hostname: mail.example.com
+
+postgres_db: mailserver
+postgres_user: mailuser
+postgres_password: "{{ vault_db_password }}"
+
+mail_users: "{{ vault_mail_users }}"
+
+project_dir: /opt/mail_server
+app_version: latest

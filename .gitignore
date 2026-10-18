@@ -1,0 +1,8 @@
+.DS_Store
+*.retry
+*.log
+.idea/
+.vscode/
+vault_password.txt
+*.pem
+*.key

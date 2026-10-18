@@ -1,0 +1,115 @@
+---
+- name: Create app and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ common_deploy_user | default('user') }}"
+    group: docker
+    mode: "0755"
+  loop:
+    - "{{ project_dir }}"
+    - "{{ project_dir }}/nginx"
+    - "{{ project_dir }}/dkim"
+
+- name: Create certbot webroot and letsencrypt directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /var/www/certbot
+    - /etc/letsencrypt
+
+- name: Template Dockerfiles and Scripts
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: "{{ common_deploy_user | default('user') }}"
+    group: docker
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - { src: nginx/nginx.conf.j2, dest: "{{ project_dir }}/nginx/nginx.conf" }
+    - { src: docker-compose.yml.j2, dest: "{{ project_dir }}/docker-compose.yml" }
+    - { src: init.sql.j2, dest: "{{ project_dir }}/init.sql" }
+
+- name: Check if SSL certificate exists
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ mail_hostname }}/fullchain.pem"
+  register: mailstack_ssl_cert_check
+
+- name: Obtain initial SSL certificate via Certbot container (Standalone before Nginx)
+  ansible.builtin.command: >
+    docker run --rm
+    -v /etc/letsencrypt:/etc/letsencrypt
+    -v /var/www/certbot:/var/www/certbot
+    -p 80:80
+    certbot/certbot certonly --standalone
+    --non-interactive
+    --agree-tos
+    --email "{{ admin_email | default('admin@' + mail_hostname) }}"
+    -d "{{ mail_hostname }}"
+  when: not mailstack_ssl_cert_check.stat.exists
+  changed_when: true
+
+- name: Build and start Docker Compose mail stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    state: present
+    pull: always
+
+- name: Check if OpenDKIM key exists
+  ansible.builtin.stat:
+    path: "{{ project_dir }}/dkim/mail.private"
+  register: mailstack_opendkim_key_check
+
+- name: Generate DKIM keypair using lightweight container
+  ansible.builtin.command: >
+    docker run --rm
+    -v {{ project_dir }}/dkim:/keys
+    alpine:latest
+    sh -c "apk add --no-cache opendkim-utils && opendkim-genkey -D /keys -d {{ mail_domain }} -s mail"
+  when: not mailstack_opendkim_key_check.stat.exists
+  changed_when: true
+
+- name: Fix key file permissions for OpenDKIM
+  ansible.builtin.file:
+    path: "{{ project_dir }}/dkim/mail.private"
+    owner: root
+    group: root
+    mode: "0600"
+  when: mailstack_opendkim_key_check.stat.exists or not mailstack_opendkim_key_check.stat.exists
+
+- name: Hash password using dovecot and insert user into PostgreSQL
+  ansible.builtin.shell: |
+    HASH=$(docker exec -i mail_dovecot doveadm pw -s SHA512-CRYPT -p "{{ item.password }}")
+    docker exec -i mail_postgres psql -U {{ postgres_user | default('mailuser') }} -d {{ postgres_db | default('mailserver') }} -c \
+      "INSERT INTO virtual_users (domain_id, email, password) \
+       VALUES ((SELECT id FROM virtual_domains WHERE name='{{ item.email.split('@')[1] }}'), '{{ item.email }}', '$HASH') \
+       ON CONFLICT (email) DO UPDATE SET password = EXCLUDED.password;"
+  loop: "{{ mail_users }}"
+  loop_control:
+    label: "{{ item.email }}"
+  no_log: true
+  register: mailstack_user_creation_result
+  changed_when: "'INSERT 0 1' in mailstack_user_creation_result.stdout or 'UPDATE 1' in mailstack_user_creation_result.stdout"
+
+- name: Read generated public DKIM key for DNS
+  ansible.builtin.shell: |
+    set -o pipefail
+    cat {{ project_dir }}/dkim/mail.txt | tr -d '\n\t"' | grep -o 'p=.*'
+  register: mailstack_dkim_public_key_raw
+  changed_when: false
+  args:
+    executable: /bin/bash
+
+- name: Print DKIM TXT record for DNS
+  ansible.builtin.debug:
+    msg:
+      - ==========================================================
+      - "СГЕНЕРИРОВАНА DKIM ЗАПИСЬ ДЛЯ DNS:"
+      - "Имя (Host): mail._domainkey"
+      - "Тип (Type): TXT"
+      - "Значение (Value): v=DKIM1; k=rsa; {{ mailstack_dkim_public_key_raw.stdout }}"
+      - ==========================================================---

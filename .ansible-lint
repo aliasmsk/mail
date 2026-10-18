@@ -1,0 +1,8 @@
+---
+profile: production
+strict: true
+
+exclude_paths:
+  - .github/
+  - .venv/
+  - group_vars/all/vault.yml
