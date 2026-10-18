@@ -1,0 +1,32 @@
+myhostname = ${MAIL_HOSTNAME}
+mydomain = ${MAIL_DOMAIN}
+myorigin = $mydomain
+inet_interfaces = all
+inet_protocols = ipv4
+
+local_transport = error:local delivery disabled
+
+smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, defer_unauth_destination
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = inet:dovecot:12345
+smtpd_sasl_auth_enable = yes
+
+smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination
+
+smtpd_tls_cert_file = /etc/letsencrypt/live/${MAIL_HOSTNAME}/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/${MAIL_HOSTNAME}/privkey.pem
+smtpd_tls_security_level = may
+
+smtpd_tls_loglevel = 1
+
+smtp_tls_security_level = may
+
+virtual_mailbox_domains = pgsql:/etc/postfix/pgsql-virtual-domains.cf
+virtual_mailbox_maps = pgsql:/etc/postfix/pgsql-virtual-mailboxes.cf
+virtual_alias_maps = pgsql:/etc/postfix/pgsql-virtual-aliases.cf
+
+virtual_transport = lmtp:dovecot:24
+
+maillog_file = /dev/stdout
+
+mynetworks = 127.0.0.0/8
