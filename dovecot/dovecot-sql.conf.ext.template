@@ -1,0 +1,6 @@
+driver = pgsql
+connect = host=${DB_HOST} dbname=${DB_NAME} user=${DB_USER} password=${DB_PASSWORD}
+default_pass_scheme = SHA512-CRYPT
+
+password_query = SELECT email AS user, password FROM virtual_users WHERE email='%u' AND active=true;
+user_query = SELECT '/var/vmail/'||vdomain.name||'/'||split_part(vuser.email, '@', 1) AS home, 1000 AS uid, 1000 AS gid FROM virtual_users vuser JOIN virtual_domains vdomain ON vdomain.id = vuser.domain_id WHERE vuser.email='%u' AND vuser.active=true;
